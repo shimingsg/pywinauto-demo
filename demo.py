@@ -73,6 +73,13 @@ def connect_app(key:str):
 # app[key_vs_created_project][key_vs_created_project].menu_select("Build->Build Solution")
 # app[key_vs_created_project][key_vs_created_project].menu_select("View->Error List")
 
+def click_continue_without_code(key: str):
+    '''Click the "Continue without code" button in Visual Studio.
+    Args:
+        key (str): The key to identify the application window.
+    '''
+    app[key].child_window(title="Continue without code", control_type="Button").click()
+
 def win_menu_select(wrapper, menu:str):
     '''Select a menu item from the application.
     Args:
@@ -114,11 +121,14 @@ if __name__ == "__main__":
     menu_build_solution = "Build->Build Solution"
     proj_name = "ConsoleApp9"
     key_vs_opened_project = f"{proj_name} - {key_vs}"
-    connect_app(key_vs_opened_project)
-    # app[key_vs_opened_project][key_vs_opened_project].print_control_identifiers()
+    start_app(key_vs)
+    connect_app(key_vs)
+    # app[key_vs][key_vs].print_control_identifiers()
     
-    title_bar = app[key_vs_opened_project][key_vs_opened_project]
+    title_bar = app[key_vs][key_vs]
     
+
+    click_continue_without_code(key_vs)
     win_menu_select(title_bar, menu_view_output)
     win_menu_select(title_bar, menu_view_error_list)
     
