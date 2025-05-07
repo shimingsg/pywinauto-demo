@@ -27,11 +27,18 @@ Timings.after_comboboxselect_wait = 5
 dist = "Enterprise"
 
 app_executable = (
-    fr"C:\Program Files\Microsoft Visual Studio\2022\{dist}\Common7\IDE\devenv.exe"
+    rf"C:\Program Files\Microsoft Visual Studio\2022\{dist}\Common7\IDE\devenv.exe"
 )
 
 key_vs = "Microsoft Visual Studio"
 key_vs_dlg = f"{key_vs}Dialog"
+
+
+test_code = """// See https://aka.ms/new-console-template for more information
+int unusedVariable; // This variable is never used
+Console.WriteLine("Hello, World!")  // This missing semicolon
+Console.WriteLine("This is a message.");
+"""
 
 app = Application(backend="uia", allow_magic_lookup=True)
 
@@ -91,7 +98,9 @@ def create_new_console_project(
     dlg.child_window(auto_id="button_Next", title="Next").click()
 
     ## Select the framework
-    framework_dropdown = dlg.child_window(title="_Framework", auto_id="ComboBoxControl", control_type="ComboBox")
+    framework_dropdown = dlg.child_window(
+        title="_Framework", auto_id="ComboBoxControl", control_type="ComboBox"
+    )
     framework_dropdown.expand()
     framework_dropdown.select(dotnet_version)
     dlg.child_window(auto_id="button_Next", title="Create").click()
@@ -113,6 +122,7 @@ def win_menu_select(wrapper, menu: str):
         key (WindowSpecification): The WindowSpecification object to identify the application window.
         menu (str): The menu item to select.
     """
+    wrapper.wait("ready")
     wrapper.menu_select(menu)
 
 
@@ -154,7 +164,7 @@ def add_new_class_library(lib_name: str, proj_location: str, title_bar):
     # Configure the new project
     dlg.child_window(auto_id="projectNameText").type_keys(lib_name)
     location_box = dlg.child_window(auto_id="locationCmb", control_type="ComboBox")
-    location_box.type_keys(proj_location, with_spaces=True)  # Set the location path
+    location_box.type_keys(proj_location, with_spaces=True)
     dlg.child_window(auto_id="projectNameText").type_keys(
         "{TAB}"
     )  # Simulate pressing TAB to move focus
@@ -219,9 +229,156 @@ def build_solution(title_bar):
     win_menu_select(title_bar, "Build->Build Solution")
 
 
+def is_build_successful(output_text):
+    """Check the build summary log for errors."""
+    import re
+
+    build_summary = re.search(
+        r"========== Build: (\d+) succeeded, (\d+) failed, (\d+) up-to-date, (\d+) skipped ==========",
+        output_text,
+    )
+
+    if build_summary:
+        succeeded = int(build_summary.group(1))
+        failed = int(build_summary.group(2))
+        up_to_date = int(build_summary.group(3))
+
+        if failed > 0:
+            print(f"Build failed with {failed} error(s).")
+            return False
+
+        if succeeded > 0 or up_to_date > 0:
+            status = "succeeded" if succeeded > 0 else "already up-to-date"
+            print(f"Build {status}.")
+            return True
+
+        print(f"Build status: {build_summary.group(0)}")
+        return failed == 0
+    else:
+        print("Build summary not found in the output.")
+        return False
+
+
+def verify_build(title_bar):
+    """Verify that the build was successful."""
+
+    build_status = app[key_vs].child_window(
+        title="Output", control_type="TabItem", found_index=0
+    )
+    build_status.click_input()
+
+    win_menu_select(title_bar, "View->Output")
+    output_pane = app[key_vs].child_window(
+        title="Output",
+        auto_id="ST:0:0:{34e76e81-ee4a-11d0-ae2e-00a0c90fffc3}",
+        control_type="Pane",
+    )
+    custom_control = output_pane.child_window(
+        auto_id="WpfTextViewHost", control_type="Custom"
+    )
+    output_edit = custom_control.child_window(
+        auto_id="WpfTextView", control_type="Edit"
+    )
+    output_text = output_edit.window_text()
+
+    return is_build_successful(output_text)
+
+
+def check_errors_and_warnings(title_bar):
+    """Check for errors and warnings in the Error List window and format the output.
+
+    Returns:
+        dict: A dictionary with error and warning information
+    """
+    title_bar.menu_select("View->Error List")
+    error_list = app[key_vs].child_window(title="Error List", control_type="TabItem")
+    error_list.click_input()
+
+    # Get the count of errors and warnings from the buttons in the toolbar
+    error_count_text = (
+        app[key_vs]
+        .child_window(title_re=r"\d+ Error", control_type="Button")
+        .window_text()
+    )
+    warning_count_text = (
+        app[key_vs]
+        .child_window(title_re=r"\d+ Warning", control_type="Button")
+        .window_text()
+    )
+
+    error_count = int(error_count_text.split()[0])
+    warning_count = int(warning_count_text.split()[0])
+
+    results = {
+        "errors": [],
+        "warnings": [],
+        "error_count": error_count if error_count > 0 else 0,
+        "warning_count": warning_count if warning_count > 0 else 0,
+    }
+
+    # Locate the results table
+    results_table = app[key_vs].child_window(
+        title="Results", auto_id="Tracking List View", control_type="Table"
+    )
+
+    # Get all DataItems in the table
+    data_items = results_table.children(control_type="DataItem")
+    error_list.wait("ready")
+
+    for item in data_items:
+        # Parse the title to determine if it's an error or warning
+        title = item.window_text()
+
+        # Extract details by finding the text elements within the data item
+        try:
+            text_elements = item.descendants(control_type="Text")
+            code = text_elements[0].window_text()
+            description = text_elements[1].window_text()
+            project = text_elements[2].window_text()
+            file = text_elements[3].window_text()
+            line = text_elements[4].window_text()
+
+            # Add information to the appropriate list
+            if "CS" in code and code.startswith("CS"):
+                issue_info = {
+                    "code": code,
+                    "description": description,
+                    "project": project,
+                    "file": file,
+                    "line": int(line) if line.isdigit() else line,
+                }
+
+                # Check if it's an error or warning based on the code
+                if "Warning" in title or (code in ["CS0168", "CS0219"]):
+                    results["warnings"].append(issue_info)
+                else:
+                    results["errors"].append(issue_info)
+        except Exception as e:
+            print(f"Error parsing item {title}: {e}")
+
+    # Print formatted output
+    print("\n===== Error List Summary =====")
+    print(f"Total: {error_count} errors, {warning_count} warnings\n")
+
+    if results["errors"]:
+        print("ERRORS:")
+        for i, error in enumerate(results["errors"], 1):
+            print(f"  {i}. [{error['code']}] {error['description']}")
+            print(f"     Location: {error['file']} (line {error['line']})")
+            print(f"     Project: {error['project']}\n")
+
+    if results["warnings"]:
+        print("WARNINGS:")
+        for i, warning in enumerate(results["warnings"], 1):
+            print(f"  {i}. [{warning['code']}] {warning['description']}")
+            print(f"     Location: {warning['file']} (line {warning['line']})")
+            print(f"     Project: {warning['project']}\n")
+
+    return results
+
+
 def run_application(title_bar):
     """Run the application and confirm it executes as expected."""
-    title_bar.wait("ready")
     title_bar.menu_select("Debug->Start Without Debugging")
 
 
@@ -239,7 +396,7 @@ def insert_breakpoint(line_number: int = 1):
     program_tab.type_keys("^g")  # Ctrl+G to open "Go To Line" dialog
 
     goto_dialog = app[key_vs].child_window(title="Go To Line", control_type="Window")
-    goto_dialog.wait('ready')
+    goto_dialog.wait("ready")
     goto_dialog.child_window(control_type="Edit").set_text(str(line_number))
     goto_dialog.child_window(title="OK", control_type="Button").click()
 
@@ -258,6 +415,26 @@ def stop_debugging(title_bar):
     title_bar.menu_select("Debug->Stop Debugging")
 
 
+def modify_code(code, proj_name: str, title_bar):
+    """Modify the code in the main file to use the ClassLibrary."""
+    import pyperclip
+
+    program_tab = app[key_vs].child_window(title="Program.cs", control_type="TabItem")
+    program_tab.click_input()
+
+    # Modify the code to use the ClassLibrary
+    program_tab.type_keys("^a")  # Select all text
+
+    # write the new code
+    pyperclip.copy(code)
+    program_tab.type_keys("^v")  # Paste the new code
+
+    # Save the changes
+    title_bar.menu_select("File->Save")
+
+    print(f"Code modified in {proj_name} successfully.")
+
+
 def main():
     dotnet_version = ".NET 9.0 (Standard Term Support)"
     proj_location = r"D:\test"
@@ -269,11 +446,21 @@ def main():
     title_bar = app[key_vs][key_vs]
 
     click_continue_without_code(key_vs)
+
     create_new_console_project(proj_name, dotnet_version, proj_location, title_bar)
-    add_new_class_library(lib_name, proj_location, title_bar)
+
+    # add_new_class_library(lib_name, proj_location, title_bar)
     add_project_reference(proj_name, lib_name, title_bar)
+
+    modify_code(test_code, proj_name, title_bar)
     build_solution(title_bar)
+    check_errors_and_warnings(title_bar)
+    if not verify_build(title_bar):
+        print("Exiting...")
+        return
+
     run_application(title_bar)
+
     insert_breakpoint(2)
     start_debugging(title_bar)
     # stop_debugging(title_bar)
