@@ -17,6 +17,7 @@ import shutil
 from pywinauto.application import Application
 from pywinauto.findwindows import ElementNotFoundError
 from pywinauto.timings import Timings
+from pywinauto.controls.uiawrapper import UIAWrapper
 
 Timings.slow()
 Timings.window_find_timeout = 10
@@ -59,7 +60,16 @@ def click_continue_without_code(key: str):
     Args:
         key (str): The key to identify the application window.
     """
-    app[key].child_window(title="Continue without code", control_type="Button").click()
+    window_continue_without_code = app[key].child_window(
+        title="Continue without code", control_type="Button"
+    )
+    if window_continue_without_code.exists():
+        window_continue_without_code.click()
+    else:
+        print("Continue without code button not found.")
+    # app[key].child_window(title="Continue without code", control_type="Button").click()
+    # if app[key].child_window(title="Continue without code", control_type="Button").exists():
+    #     app[key].child_window(title="Continue without code", control_type="Button").click()
 
 
 def create_new_console_project(
