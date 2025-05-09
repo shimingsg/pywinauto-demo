@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
 # from pywinauto import application, Desktop
-from pywinauto.application import Application, WindowSpecification
+from pywinauto import Desktop
+from pywinauto.controls.uiawrapper import UIAWrapper
+from pywinauto.application import Application, ProcessNotFoundError
 from pywinauto.timings import Timings
 from pywinauto.controls.uiawrapper import UIAWrapper
-
+from typing import Optional
+import psutil
+import os
 
 Timings.slow()
 Timings.window_find_timeout = 10
@@ -11,22 +15,62 @@ Timings.after_click_wait=5
 Timings.after_listviewselect_wait=5
 Timings.after_comboboxselect_wait=5
 
-dist = 'Community'
-dist = 'Enterprise'
-
-app_executable = r"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\devenv.exe"
-
 key_vs = "Microsoft Visual Studio"
 key_vs_dlg =f"{key_vs}Dialog"
 
+def get_vs_executable(dist:str = 'Enterprise') -> str:
+    '''Get the Visual Studio executable path based on the distribution.
+    Returns:
+        str: The path to the Visual Studio executable.
+    '''
+    default_vs_folder = os.path.join(os.environ.get('PROGRAMFILES'), "Microsoft Visual Studio", "2022")
+    vs_dists = ['Community', 'Professional', 'Enterprise']
+    if dist not in vs_dists:
+        raise ValueError("Invalid distribution specified.")
+    return f"{default_vs_folder}\\{dist}\\Common7\\IDE\\devenv.exe"
+
+app_vs_executable = get_vs_executable()
 app = Application(backend="uia", allow_magic_lookup=True)
+
+def kill_app_by_process_id(process_id:int):
+    '''Kill the application process by its ID.
+    Args:
+        process_id (int): The ID of the process to kill.
+    '''
+    try:
+        p = psutil.Process(process_id)
+        p.terminate()
+        p.wait(timeout=3)
+    except psutil.NoSuchProcess:
+        print(f"Process {process_id} not found.")
+    except psutil.AccessDenied:
+        print(f"Access denied to terminate process {process_id}.")
+    except Exception as e:
+        print(f"Error terminating process {process_id}: {e}")
+
+def kill_app_by_name(name:str):
+    '''Kill the application process by its name.
+    Args:
+        name (str): The name of the process to kill.
+    '''
+    for proc in psutil.process_iter(['pid', 'name']):
+        if proc.info['name'] == name:
+            try:
+                proc.terminate()
+                proc.wait(timeout=3)
+            except psutil.NoSuchProcess:
+                print(f"Process {proc.info['pid']} not found.")
+            except psutil.AccessDenied:
+                print(f"Access denied to terminate process {proc.info['pid']}.")
+            except Exception as e:
+                print(f"Error terminating process {proc.info['pid']}: {e}")
 
 def start_app(key:str):
     '''Start the application and wait for it to be ready.
     Args:
         key (str): The key to identify the application window.
     '''
-    app.start(app_executable)
+    app.start(app_vs_executable)
     app[key].wait('ready')
     # app[key_vs].print_control_identifiers()
 
@@ -35,11 +79,15 @@ def connect_app(key:str):
     Args:
         key (str): The key to identify the application window.
     '''
-    app.connect(path = app_executable)
-    app[key].wait('ready')
-    # app[key_vs].print_control_identifiers()
-
-# app.start(app_executable)
+    try:
+        app.connect(path = app_vs_executable)
+        app[key].wait('ready')
+        return app[key]
+    except ProcessNotFoundError:
+        return None
+    except Exception as e:
+        print(f"Error connecting to {key}: {e}")
+        raise
 
 # app[key_vs].wait('ready')
 # app[key_vs].print_control_identifiers()
@@ -107,22 +155,49 @@ def get_solution_explorer(key:str):
     app[key].child_window(title="Solution Explorer", control_type="Tree", auto_id="SolutionExplorer").print_control_identifiers()
     # app[key_vs_created_project].child_window(title='Solution Explorer', class_name='TreeView', auto_id='SolutionExplorer').print_control_identifiers()
 
-if __name__ == "__main__":
-    
+def find_windows(doc_name:str)-> Optional[UIAWrapper]:
+    '''Find a window by its document name.
+    Args:
+        doc_name (str): The document name of the window to find.
+    Returns:
+        UIAWrapper: The found window object.
+    '''
+    try:
+        return Desktop(backend="uia").window(title=doc_name)
+    except Exception as e:
+        print(f"Error finding window {doc_name}: {e}")
+        return None
+
+def test_start_app():
+    '''Test the start_app function.'''
+    start_app(key_vs)
+    app[key_vs].wait('ready')
+    app[key_vs].print_control_identifiers()
+
+def test_connect_app():
+    '''Test the connect_app function.'''
     menu_view_error_list = "View->Error List"
     menu_view_output = "View->Output"
     menu_build_solution = "Build->Build Solution"
     proj_name = "ConsoleApp9"
     key_vs_opened_project = f"{proj_name} - {key_vs}"
-    connect_app(key_vs_opened_project)
-    # app[key_vs_opened_project][key_vs_opened_project].print_control_identifiers()
     
+    app[key_vs].wait('ready')
+    # app[key_vs].print_control_identifiers()
     title_bar = app[key_vs_opened_project][key_vs_opened_project]
-    
     win_menu_select(title_bar, menu_view_output)
     win_menu_select(title_bar, menu_view_error_list)
+
+if __name__ == "__main__":
     
-    # app[key_vs_opened_project].child_window(title="MenuBar", auto_id="MenuBar", control_type="MenuBar").menu_select("View->Error List")
-    # app[key_vs_opened_project][key_vs_opened_project].menu_select("View->Error List")
-    # menu_select(key_vs_opened_project, "View->Error List")
-    # get_solution_explorer(key_vs_opened_project)
+    kill_app_by_name("devenv.exe")
+    
+     
+    start_app(key_vs)
+    
+    a = find_windows(key_vs)
+    a.minimize()
+    
+    a.restore()
+    print(type(a))
+   
